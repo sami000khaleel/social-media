@@ -1,77 +1,85 @@
 const mongoose = require("mongoose");
-const userSchema = new mongoose.Schema({
-  followers: [
-    {
-      type: mongoose.SchemaTypes.ObjectId,
-      ref: "User",
-    },
-  ],
-  following: [
-    {
-      type: mongoose.SchemaTypes.ObjectId,
-      ref: "User",
-    },
-  ],
-  certifiedDoctor: { type: Boolean, required: true },
-  firstName: {
-    type: String,
-    required: true,
-  },
-  lastName: {
-    type: String,
-    required: true,
-  },
-  birthDate: {
-    type: Date,
-    required: true,
-  },
-  email: {
-    type: String,
-    required: true,
-  },
-  password: {
-    type: String,
-    required: true,
-  },
-  location: {
-    country: { required: true, type: String },
-    city: { required: true, type: String },
-  },
-  profileImage: {
-    type: String,
-  },
-
-  preferredTopics: [
-    {
-      required: true,
-      type: String,
-      enum: [
-        "Anxiety & Stress Management",
-        "Depression & Mood Disorders",
-        "Relationships & Interpersonal Issues",
-        "Self-Esteem & Identity",
-        "Trauma & PTSD",
-        "Growth, Healing & Motivation",
-      ],
-    },
-  ],
-  verificationCodes: [
-    {
-      code: String,
-      createdAt: {
-        requried: true,
-        type: Date,
-        default: Date.now(),
+// add the user name for all the code around
+const userSchema = new mongoose.Schema(
+  {
+    userName: { type: String, required: true },
+    describtion: { type: String },
+    followers: [
+      {
+        type: mongoose.SchemaTypes.ObjectId,
+        ref: "User",
       },
+    ],
+    following: [
+      {
+        type: mongoose.SchemaTypes.ObjectId,
+        ref: "User",
+      },
+    ],
+    certifiedDoctor: { type: Boolean, required: true },
+    firstName: {
+      type: String,
+      required: true,
     },
-  ],
-  createdAt: {
-    type: Date,
-    default: Date.now,
+    posts: [{ type: mongoose.SchemaTypes.ObjectId, ref: "Post" }],
+    lastName: {
+      type: String,
+      required: true,
+    },
+    birthDate: {
+      type: Date,
+      required: true,
+    },
+    email: {
+      type: String,
+      required: true,
+    },
+    password: {
+      type: String,
+      required: true,
+    },
+    location: {
+      country: {  type: String },
+      city: {  type: String },
+    },
+    profileImage: {
+      type: String,
+    },
+    about: { type: String },
+    preferredTopics: [
+      {
+        required: true,
+        type: String,
+        enum: [
+          "Anxiety & Stress Management",
+          "Depression & Mood Disorders",
+          "Relationships & Interpersonal Issues",
+          "Self-Esteem & Identity",
+          "Trauma & PTSD",
+          "Growth, Healing & Motivation",
+        ],
+      },
+    ],
+    verificationCodes: [
+      {
+        code: String,
+        createdAt: {
+          requried: true,
+          type: Date,
+          default: Date.now(),
+        },
+      },
+    ],
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+    files: [{ type: String, _id: false }],
   },
-},{
-  timestamps: true // This automatically adds createdAt and updatedAt fields
-});
+  {
+    timestamps: true, // This automatically adds createdAt and updatedAt fields
+  }
+);
 module.exports = mongoose.model("User", userSchema);
 // 1. Anxiety & Stress Management
 // Posts about panic attacks, daily stress, social anxiety, overthinking, etc.

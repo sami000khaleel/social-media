@@ -1,0 +1,11 @@
+const express=require('express')
+const postController=require('../controllers/postController')
+const postMiddleware = require('../middleware/postMiddleware')
+const {postMediaUploader}=require('../multerUploaders')
+const router=express.Router()
+router.post('/create-post',postMiddleware.postsImagesSetupMiddleware,postMediaUploader.array('images',8),postController.createPost)
+router.patch('/modify-post',postMiddleware.postsImagesModifierSetupMiddleware,postMediaUploader.array('images',8),postController.modifyPost)
+router.delete('/delete-post',postController.deletePost)
+router.put('/like-unlike-post',postController.likeUnlikePost)
+router.get('/get-post',postController.getPost)
+module.exports=router
