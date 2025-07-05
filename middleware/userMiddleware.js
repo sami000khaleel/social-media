@@ -3,8 +3,16 @@ const User = require("../models/userSchema");
 const authentication = require("./authentication");
 const fs = require("fs");
 const path = require("path");
+const Post=require('../models/postSchema')
 class userMiddleware {
   constructor() {}
+  static async getUsersPosts(user){
+    let postsIds=user.posts
+    console.log(postsIds)
+    let posts = await Post.find({ _id: { $in: postsIds } });
+    return posts
+
+  }
   static async findUserById(userId){
     const user=await User.findById(userId)
     if(!user.id) throwError('user was not found',404)

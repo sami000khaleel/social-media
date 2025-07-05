@@ -16,4 +16,5 @@ router.put('/change-password',userController.changePassword)
 router.put('/change-email',userController.changeEmail)
 router.get('/confirm-old-email-change',userController.receiveFirstConfirmation)
 router.get('/confirm-new-email-change',userController.receiveSecondConfirmation)
+router.get('/get-users-profile',userController.getUsersProfile)
 module.exports=router

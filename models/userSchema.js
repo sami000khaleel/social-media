@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 // add the user name for all the code around
 const userSchema = new mongoose.Schema(
   {
+    blockedUsers:[{type:mongoose.SchemaTypes.ObjectId}],
     userName: { type: String, required: true },
     describtion: { type: String },
     followers: [
@@ -44,6 +45,8 @@ const userSchema = new mongoose.Schema(
     },
     profileImage: {
       type: String,
+      required:true,
+      default:''
     },
     about: { type: String },
     preferredTopics: [

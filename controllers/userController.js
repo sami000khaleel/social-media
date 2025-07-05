@@ -1,11 +1,12 @@
 const User = require("../models/userSchema");
 const userMiddleware = require("../middleware/userMiddleware");
 const authentication = require("../middleware/authentication");
+const Post = require("../models/postSchema");
 const { throwError, handleError } = require("../errorHandler");
 const { profileImageUploader } = require("../multerUploaders");
 const fs = require("fs");
 const path = require("path");
-const jwt=require('jsonwebtoken')
+const jwt = require("jsonwebtoken");
 class userController {
   constructor() {}
 
@@ -14,73 +15,108 @@ class userController {
       user.toObject ? user.toObject() : user;
     return sanitized;
   }
- static async receiveFirstConfirmation(req, res) {
-  try {
-    let { token } = req.query;
-    if (!token) throwError("no token was sent");
-    
-    const { userId, newEmail, type } = await jwt.verify(token, process.env.JWT_SECRET);
-    const user = await userMiddleware.findUserById(userId);
+  static async receiveFirstConfirmation(req, res) {
+    try {
+      let { token } = req.query;
+      if (!token) throwError("no token was sent");
 
-    // Create token for new email confirmation
-    const newEmailConfirmationToken = jwt.sign(
-      { userId, newEmail, type: "new-email-confirm" },
-      process.env.JWT_SECRET,
-      { expiresIn: "30s" }
-    );
+      const { userId, newEmail, type } = await jwt.verify(
+        token,
+        process.env.JWT_SECRET
+      );
+      const user = await userMiddleware.findUserById(userId);
 
-    // Send confirmation to new email
-    await authentication.sendConfirmationEmail({
-      email: newEmail,
-      subject: "Verify Your New Email",
-      html: authentication.createEmailChangeConfirmationHtml(
-        newEmailConfirmationToken,
-        "new"
-      ),
-    });
+      // Create token for new email confirmation
+      const newEmailConfirmationToken = jwt.sign(
+        { userId, newEmail, type: "new-email-confirm" },
+        process.env.JWT_SECRET,
+        { expiresIn: "30s" }
+      );
 
-    // Return HTML response for old email confirmation
-    const html = authentication.createEmailChangeConfirmationPage('first', {
-      oldEmail: user.email,
-      newEmail: newEmail
-    });
-    console.log('asdsadadsa')
-    return res.send(html);
-  } catch (error) {
-    if (error.name === "TokenExpiredError") {
-      const html = authentication.createEmailChangeConfirmationPage('expired');
-      return res.status(401).send(html);
+      // Send confirmation to new email
+      await authentication.sendConfirmationEmail({
+        email: newEmail,
+        subject: "Verify Your New Email",
+        html: authentication.createEmailChangeConfirmationHtml(
+          newEmailConfirmationToken,
+          "new"
+        ),
+      });
+
+      // Return HTML response for old email confirmation
+      const html = authentication.createEmailChangeConfirmationPage("first", {
+        oldEmail: user.email,
+        newEmail: newEmail,
+      });
+      console.log("asdsadadsa");
+      return res.send(html);
+    } catch (error) {
+      if (error.name === "TokenExpiredError") {
+        const html =
+          authentication.createEmailChangeConfirmationPage("expired");
+        return res.status(401).send(html);
+      }
+      handleError(error, res);
     }
-    handleError(error, res);
   }
-}
+  static async getUsersProfile(req, res) {
+    try {
+      if (!req.query?.userId) throwError("no user id was sent", 400);
+      let user = await userMiddleware.findUserById(req.query.userId);
+      let usersPosts = [];
+      if (user.posts.length)
+        usersPosts = await userMiddleware.getUsersPosts(user);
+      console.log(usersPosts)
+      usersPosts = await Promise.all(
+        usersPosts.map(async (usersPost) => {
+          return await usersPost.populate({
+            path: "firstLayerComments",
+            select: "-__v", // Remove space after -
+            populate: {
+              path: "user",
+              select: "userName profileImage", // Remove trailing space
+            },
+          });
+        })
+      );
+      user.posts = usersPosts;
 
-static async receiveSecondConfirmation(req, res) {
-  try {
-    let { token } = req.query;
-    if (!token) throwError("no token was sent");
-    
-    const { userId, newEmail, type } = await jwt.verify(token, process.env.JWT_SECRET);
-    const user = await userMiddleware.findUserById(userId);
-    
-    // Update the email
-    user.email = newEmail;
-    await user.save();
-    
-    // Return HTML response for successful change
-    const html = authentication.createEmailChangeConfirmationPage('second', {
-      newEmail: newEmail
-    });
-    
-    return res.send(html);
-  } catch (error) {
-    if (error.name === "TokenExpiredError") {
-      const html = authentication.createEmailChangeConfirmationPage('expired');
-      return res.status(401).send(html);
+      user = userController.sanitizeUser(user);
+      return res.json({ success: true, user });
+    } catch (error) {
+      handleError(error,res)
     }
-    handleError(error, res);
   }
-}
+  static async receiveSecondConfirmation(req, res) {
+    try {
+      let { token } = req.query;
+      if (!token) throwError("no token was sent");
+
+      const { userId, newEmail, type } = await jwt.verify(
+        token,
+        process.env.JWT_SECRET
+      );
+      const user = await userMiddleware.findUserById(userId);
+
+      // Update the email
+      user.email = newEmail;
+      await user.save();
+
+      // Return HTML response for successful change
+      const html = authentication.createEmailChangeConfirmationPage("second", {
+        newEmail: newEmail,
+      });
+
+      return res.send(html);
+    } catch (error) {
+      if (error.name === "TokenExpiredError") {
+        const html =
+          authentication.createEmailChangeConfirmationPage("expired");
+        return res.status(401).send(html);
+      }
+      handleError(error, res);
+    }
+  }
   static async changeEmail(req, res) {
     try {
       const { userId } = await authentication.validateToken(req);
@@ -93,7 +129,7 @@ static async receiveSecondConfirmation(req, res) {
         throwError("Invalid email format", 400);
       }
 
-      const foundUser = await User.findOne({'email':newEmail});
+      const foundUser = await User.findOne({ email: newEmail });
       if (foundUser && foundUser._id.toString() !== userId.toString()) {
         throwError("Email already in use by another account", 409);
       }
