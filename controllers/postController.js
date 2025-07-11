@@ -22,43 +22,86 @@ static async getPosts(req, res) {
       "Trauma & PTSD",
       "Growth, Healing & Motivation",
     ];
-    const {userId}=await authentication.validateToken(req)
-    const user=await userMiddleware.findUserById(userId)
-    const { logs } = req.body;
 
-    // If logs are provided, call AI model
+    const { userId } = await authentication.validateToken(req);
+    const user = await userMiddleware.findUserById(userId);
+    const { logs, existingPostIds = [], postsNumber = 50 } = req.body;
+
+    let recommendations = null;
+
     if (logs) {
       const aiUrl = `${process.env.AIURL}/recommend`;
 
-      const aiResponse = await axios.post(aiUrl, {logs}, {
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }).catch(err=>console.log(err.message));
+      const aiResponse = await axios.post(aiUrl, { logs }, {
+        headers: { "Content-Type": "application/json" },
+      }).catch(err => {
+        console.error("AI error:", err.message);
+        throwError("AI recommendation service failed", 500);
+      });
 
-      const recommendations = aiResponse.data?.recommendations;
+      recommendations = aiResponse.data?.recommendations;
 
       if (!recommendations || recommendations.length !== categories.length) {
         throwError("Invalid AI response", 500);
       }
-
-
-      return res.status(200).json({
-        success: true,
-        recommendations,
-      });
     }
 
-    // If no logs, return all categories unranked
+    const categoryScorePairs = (recommendations ?? categories.map(() => 1)).map((score, index) => ({
+      category: categories[index],
+      score,
+    })).filter(pair => pair.score > 0);
+
+    const totalScore = categoryScorePairs.reduce((sum, c) => sum + c.score, 0);
+    const posts = new Map(); // to track unique posts
+    const categoryStats = {}; // for response
+
+    for (const { category, score } of categoryScorePairs) {
+      const limit = Math.round((score / totalScore) * postsNumber);
+      const rawPosts = await Post.find({
+        topic: category,
+        deletedFlag: false,
+        _id: { $nin: existingPostIds },
+      })
+        .populate({ path: "publisher", select: "userName profileImage blockedUsers" })
+        .sort({ createdAt: -1 })
+        .limit(limit * 2); // fetch extra in case of filter drop
+
+      const filtered = rawPosts.filter(post => {
+        const author = post.publisher;
+
+        const theyBlockedMe = author?.blockedUsers?.some(
+          b => b.blockedUserId.toString() === user._id.toString()
+        );
+
+        const iBlockedThem = user?.blockedUsers?.some(
+          b => b.blockedUserId.toString() === author?._id.toString()
+        );
+
+        return !(theyBlockedMe || iBlockedThem || posts.has(post._id.toString()));
+      });
+
+      const finalPosts = filtered.slice(0, limit);
+      finalPosts.forEach(post => posts.set(post._id.toString(), post));
+
+      categoryStats[category] = {
+        count: finalPosts.length,
+        percentage: ((score / totalScore) * 100).toFixed(2) + '%',
+      };
+    }
+
+    const sortedPosts = [...posts.values()].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
     return res.status(200).json({
       success: true,
-      categories,
+      posts: sortedPosts.slice(0, postsNumber),
+      categoryStats,
     });
 
   } catch (error) {
     handleError(error, res);
   }
 }
+
 
   static async getFile(req, res) {
     try {
