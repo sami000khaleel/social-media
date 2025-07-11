@@ -5,6 +5,7 @@ const Post = require("../models/postSchema");
 const { throwError, handleError } = require("../errorHandler");
 const { profileImageUploader } = require("../multerUploaders");
 const fs = require("fs");
+const mongoose = require("mongoose");
 const path = require("path");
 const jwt = require("jsonwebtoken");
 class userController {
@@ -14,6 +15,103 @@ class userController {
     const { password, __v, _id, createdAt, updatedAt, ...sanitized } =
       user.toObject ? user.toObject() : user;
     return sanitized;
+  }
+ static async blockUnblock(req, res) {
+  try {
+    const { userId } = await authentication.validateToken(req);
+    const { targetUserId } = req.body;
+
+    if (!targetUserId) throwError("No target user ID was sent", 400);
+    if (userId === targetUserId) throwError("Cannot block yourself", 400);
+
+    const [user, targetUser] = await Promise.all([
+      userMiddleware.findUserById(userId),
+      userMiddleware.findUserById(targetUserId),
+    ]);
+
+    if (!targetUser) throwError("Target user not found", 404);
+
+    const isBlocked = userMiddleware.hasUser1blockedUser2(user, targetUser.id);
+
+    if (isBlocked) {
+      // Unblock
+      userMiddleware.unBlockUser(user, targetUser);
+      await user.save();
+
+      return res.status(200).json({
+        success: true,
+        message: "User unblocked successfully",
+      });
+    } else {
+      // Block
+      const { canBlock, reason } = userMiddleware.canUserBlock(user, targetUser);
+      if (!canBlock) throwError(reason, 403);
+
+      userMiddleware.blockUser(user, targetUser);
+      await Promise.all([user.save(), targetUser.save()]);
+
+      return res.status(200).json({
+        success: true,
+        message: "User blocked successfully",
+      });
+    }
+  } catch (error) {
+    handleError(error, res);
+  }
+}
+
+  static async followUnfollow(req, res) {
+    try {
+      const { targetUserId } = req.body;
+      if (!targetUserId) throwError("no user id was found", 400);
+      const { userId } = await authentication.validateToken(req);
+      const [user, targetUser] = await Promise.all([
+        userMiddleware.findUserById(userId),
+        userMiddleware.findUserById(targetUserId),
+      ]);
+      if (userMiddleware.hasUser1blockedUser2(targetUser, user.id))
+        throwError("you have been blocked by this user", 403);
+      if (userMiddleware.hasUser1blockedUser2(user, targetUser.id))
+        throwError("you have blocked this user", 403);
+      const isFollowing = user.following.some((id) =>
+        id.equals(targetUser._id)
+      );
+      const result = isFollowing
+        ? userMiddleware.unfollow(user, targetUser)
+        : userMiddleware.follow(user, targetUser);
+
+      await Promise.all([result.user.save(), result.targetUser.save()]);
+
+      return res.json({ success: true });
+    } catch (error) {
+      handleError(error, res);
+    }
+  }
+  static async getNameImage(req, res) {
+    try {
+      const { userId } = await authentication.validateToken(req);
+      const currentUser = await userMiddleware.findUserById(userId);
+
+      if (!req.query?.usersIds) throwError("no ids were sent");
+
+      let usersIds = req.query.usersIds.split("-");
+      // Remove current user's ID and invalid IDs
+      usersIds = usersIds.filter(
+        (id) =>
+          id.toString() !== currentUser.id.toString() &&
+          mongoose.Types.ObjectId.isValid(id)
+      );
+
+      // Find users and exclude those who blocked the current user
+      const users = await User.find({
+        _id: { $in: usersIds },
+        "blockedUsers.blockedUserId": { $ne: currentUser._id },
+      }).select("userName profileImage");
+
+      return res.json({ success: true, users });
+    } catch (error) {
+      handleError(error, res);
+    }
   }
   static async receiveFirstConfirmation(req, res) {
     try {
@@ -61,12 +159,18 @@ class userController {
   }
   static async getUsersProfile(req, res) {
     try {
+      const { requesterId } = await authentication.validateToken(req);
+      const requester = await userMiddleware.findUserById(requesterId);
       if (!req.query?.userId) throwError("no user id was sent", 400);
       let user = await userMiddleware.findUserById(req.query.userId);
+      if (userMiddleware.hasUser1blockedUser2(requester, user.id))
+        throwError("you have blocked this user", 403);
+      if (userMiddleware.hasUser1blockedUser2(user, requester.id))
+        throwError("you have been blocked by this user", 403);
       let usersPosts = [];
       if (user.posts.length)
         usersPosts = await userMiddleware.getUsersPosts(user);
-      console.log(usersPosts)
+      console.log(usersPosts);
       usersPosts = await Promise.all(
         usersPosts.map(async (usersPost) => {
           return await usersPost.populate({
@@ -84,7 +188,7 @@ class userController {
       user = userController.sanitizeUser(user);
       return res.json({ success: true, user });
     } catch (error) {
-      handleError(error,res)
+      handleError(error, res);
     }
   }
   static async receiveSecondConfirmation(req, res) {

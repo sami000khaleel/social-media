@@ -7,27 +7,164 @@ const Comment = require("../models/commentSchema");
 const postMiddleware = require("../middleware/postMiddleware");
 const commentMiddleware = require("../middleware/commentMiddleware");
 const { handleError, throwError } = require("../errorHandler");
+const axios=require('axios')
 const userMiddleware = require("../middleware/userMiddleware");
 class postController {
   constructor() {}
+
+static async getPosts(req, res) {
+  try {
+    const categories = [
+      "Anxiety & Stress Management",
+      "Depression & Mood Disorders",
+      "Relationships & Interpersonal Issues",
+      "Self-Esteem & Identity",
+      "Trauma & PTSD",
+      "Growth, Healing & Motivation",
+    ];
+    const {userId}=await authentication.validateToken(req)
+    const user=await userMiddleware.findUserById(userId)
+    const { logs } = req.body;
+
+    // If logs are provided, call AI model
+    if (logs) {
+      const aiUrl = `${process.env.AIURL}/recommend`;
+
+      const aiResponse = await axios.post(aiUrl, {logs}, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }).catch(err=>console.log(err.message));
+
+      const recommendations = aiResponse.data?.recommendations;
+
+      if (!recommendations || recommendations.length !== categories.length) {
+        throwError("Invalid AI response", 500);
+      }
+
+
+      return res.status(200).json({
+        success: true,
+        recommendations,
+      });
+    }
+
+    // If no logs, return all categories unranked
+    return res.status(200).json({
+      success: true,
+      categories,
+    });
+
+  } catch (error) {
+    handleError(error, res);
+  }
+}
+
+  static async getFile(req, res) {
+    try {
+      const { userId } = await authentication.validateToken(req);
+      const user = await userMiddleware.findUserById(userId);
+      const { postId, filesName } = req.query;
+
+      if (!filesName) throwError("No file name was sent", 400);
+
+      const post = await Post.findById(postId).populate([
+        { path: "publisher", select: "blockedUsers" },
+      ]);
+
+      if (!post) throwError("Post not found", 404);
+
+      const isBlockedByPublisher = post.publisher.blockedUsers?.some(
+        (blockedUser) =>
+          blockedUser.blockedUserId.toString() === user._id.toString()
+      );
+
+      if (isBlockedByPublisher) throwError("You are blocked by this user", 403);
+
+      const iBlockedPublisher = userMiddleware.hasUser1blockedUser2(
+        user,
+        post.publisher._id
+      );
+
+      if (iBlockedPublisher) throwError("You have blocked this user", 403);
+
+      const filePath = path.join(
+        __dirname,
+        "..",
+        "uploads",
+        "posts",
+        postId,
+        filesName
+      );
+
+      if (!fs.existsSync(filePath)) throwError("No file was found", 404);
+
+      return res.sendFile(filePath);
+    } catch (error) {
+      handleError(error, res);
+    }
+  }
+
   static async getPost(req, res) {
     try {
+      const { userId } = await authentication.validateToken(req);
+      const user = await userMiddleware.findUserById(userId);
+
       const { postId } = req.query;
       const post = await postMiddleware.findPostById(postId);
-      console.log(post);
+
       await post.populate([
-        { path: "publisher", select: "userName profileImage" },
+        {
+          path: "publisher",
+          select: "userName profileImage blockedUsers", // include for filtering
+        },
         {
           path: "firstLayerComments",
-          select: "content repliedBy repliedTo likedBy createdAt",
-          populate: { path: "user", select: "userName profileImage" },
+          select: "content repliedBy repliedTo likedBy createdAt user",
+          populate: {
+            path: "user",
+            select: "userName profileImage blockedUsers", // include for filtering
+          },
         },
       ]);
+
+      // Filter firstLayerComments
+      post.firstLayerComments = post.firstLayerComments.filter((comment) => {
+        const commentUser = comment.user;
+        const postOwner = post.publisher;
+
+        const theyBlockedMe = commentUser?.blockedUsers?.some(
+          (b) => b.blockedUserId.toString() === user._id.toString()
+        );
+
+        const iBlockedThem = user?.blockedUsers?.some(
+          (b) => b.blockedUserId.toString() === commentUser?._id.toString()
+        );
+
+        const postOwnerBlockedCommenter = postOwner?.blockedUsers?.some(
+          (b) => b.blockedUserId.toString() === commentUser?._id.toString()
+        );
+
+        return !(theyBlockedMe || iBlockedThem || postOwnerBlockedCommenter);
+      });
+
+      // 🧹 Remove blockedUsers before sending
+      if (post.publisher?.blockedUsers) {
+        delete post.publisher.blockedUsers;
+      }
+
+      post.firstLayerComments.forEach((comment) => {
+        if (comment.user?.blockedUsers) {
+          delete comment.user.blockedUsers;
+        }
+      });
+
       return res.json({ success: true, post });
     } catch (error) {
       handleError(error, res);
     }
   }
+
   static async likeUnlikePost(req, res) {
     try {
       const { userId } = await authentication.validateToken(req);
@@ -35,12 +172,26 @@ class postController {
       const { postId } = req.body;
       if (!postId) throwError("no post id was sent");
       let post = await postMiddleware.findPostById(postId);
+
+      if (userMiddleware.hasUser1blockedUser2(user, post.publisher))
+        throwError("you have blocked this user", 403);
+      const postPublisher = await User.findById(post.publisher).select(
+        "blockedUsers"
+      );
+      if (
+        postPublisher.blockedUsers.some(
+          (blockedUser) =>
+            blockedUser.blockedUserId.toString() == user.id.toString()
+        )
+      )
+        throwError("you have been blocked by this user", 403);
       // if (post.deletedFlag) throwError("this post was deleted", 401);
       if (!post.likes.includes(user.id)) post.likes.push(user.id);
       else {
         post.likes = post.likes.filter((likerId) => likerId != user.id);
       }
       console.log(post.likes);
+
       await post.save();
       return res.json({ success: true });
     } catch (error) {
@@ -126,11 +277,17 @@ class postController {
       const postId = req.postId; // From middleware
       const userId = req.user.id; // From auth middleware
 
+      // Determine if the post is a reel (single video)
+      const files = req.files?.map((file) => file.filename) || [];
+      const isReel =
+        (files.length === 1 && files[0].match(/\.(mp4|mov|avi|mkv)$/i)) ||
+        false;
+
       const post = await Post.create({
-        reelFlag: req.body?.reelFlag == "true" ? true : false,
+        reelFlag: isReel, // Set to true only if single video file
         topic,
-        description, // Fixed typo (was 'describtion')
-        files: req.files?.map((file) => file.filename) || [],
+        description,
+        files: files,
         publisher: userId,
         _id: postId,
       });

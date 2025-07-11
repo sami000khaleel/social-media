@@ -2,7 +2,12 @@ const mongoose = require("mongoose");
 // add the user name for all the code around
 const userSchema = new mongoose.Schema(
   {
-    blockedUsers:[{type:mongoose.SchemaTypes.ObjectId}],
+    blockedUsers: [
+      {
+        blockedUserId: { type: mongoose.SchemaTypes.ObjectId },
+        date: { type: Date, default: Date.now() },
+      },
+    ],
     userName: { type: String, required: true },
     describtion: { type: String },
     followers: [
@@ -40,13 +45,12 @@ const userSchema = new mongoose.Schema(
       required: true,
     },
     location: {
-      country: {  type: String },
-      city: {  type: String },
+      country: { type: String },
+      city: { type: String },
     },
     profileImage: {
       type: String,
-      required:true,
-      default:''
+      default: "",
     },
     about: { type: String },
     preferredTopics: [

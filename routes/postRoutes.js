@@ -8,4 +8,6 @@ router.patch('/modify-post',postMiddleware.postsImagesModifierSetupMiddleware,po
 router.delete('/delete-post',postController.deletePost)
 router.put('/like-unlike-post',postController.likeUnlikePost)
 router.get('/get-post',postController.getPost)
+router.get('/get-file',postController.getFile)
+router.post('/get-posts',postController.getPosts)
 module.exports=router
