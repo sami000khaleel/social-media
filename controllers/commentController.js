@@ -1,4 +1,6 @@
 const mongoose = require("mongoose");
+const io=require('../index')
+const {sendNotification}=require('../notificationUtils')
 const Post = require("../models/postSchema");
 const User = require("../models/userSchema");
 const Comment = require("../models/commentSchema");
@@ -9,6 +11,61 @@ const userMiddleware = require("../middleware/userMiddleware");
 const { throwError, handleError } = require("../errorHandler");
 class commentController {
   constructor() {}
+  static async likeComment(req, res) {
+    try {
+      const { userId } = await authentication.validateToken(req);
+      const user = await userMiddleware.findUserById(userId);
+
+      const { commentId } = req.body;
+      if (!commentId) throwError("no comment id was sent", 400);
+
+      const comment = await Comment.findById(commentId).populate({
+        path: "user",
+        select: "_id userName profileImage blockedUsers",
+      });
+
+      if (!comment) throwError("no comment was found", 404);
+
+      if (userMiddleware.hasUser1blockedUser2(user, comment.user))
+        throwError("you have blocked this user", 403);
+
+      if (
+        comment.user.blockedUsers?.some(
+          (b) => b.blockedUserId.toString() === user.id.toString()
+        )
+      )
+        throwError("you have been blocked by this user", 403);
+
+      const alreadyLiked = comment.likedBy.includes(user._id);
+
+      if (!alreadyLiked) {
+        comment.likedBy.push(user._id);
+      } else {
+        comment.likedBy = comment.likedBy.filter(
+          (likerId) => likerId.toString() !== user._id.toString()
+        );
+      }
+
+      await comment.save();
+
+      if (!alreadyLiked && user.id !== comment.user._id.toString()) {
+        sendNotification({io:req.app.get('io'),
+          type: "like_comment",
+          actorUser: user,
+          targetUserId: comment.user._id,
+          entity: { commentId: comment._id },
+        });
+      }
+
+      return res.json({
+        success: true,
+        liked: !alreadyLiked,
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+  }
+
   static async deleteComment(req, res) {
     try {
       if (!req.query?.commentId) throwError("no comment id was found", 400);
@@ -92,12 +149,10 @@ class commentController {
     try {
       const { postId, content, repliedTo } = req.body;
 
-      // Validation should come first
-      if (!content) throwError("You have to comment something", 400); // Changed to 400 (bad request)
+      if (!content) throwError("You have to comment something", 400);
 
       const { userId } = await authentication.validateToken(req);
 
-      // Parallelize these operations since they don't depend on each other
       const [post, user] = await Promise.all([
         postMiddleware.findPostById(postId),
         userMiddleware.findUserById(userId),
@@ -105,31 +160,71 @@ class commentController {
 
       if (!post) throwError("Post not found", 404);
       if (!user) throwError("User not found", 404);
-      if (userMiddleware.hasUser1blockedUser2(user, post.publisher))
-        throwError("this user has blocked you", 403);
+
+      if (userMiddleware.hasUser1blockedUser2(user, post.publisher)) {
+        throwError("This user has blocked you", 403);
+      }
+
       const comment = await Comment.create({
-        user: user._id, // Use _id instead of id for consistency
+        user: user._id,
         content,
         postId,
         repliedTo: repliedTo || null,
       });
 
-      // Update post's firstLayerComments only if it's not a reply
       if (!repliedTo) {
         post.firstLayerComments.push(comment._id);
         await post.save();
       }
 
-      // Handle reply logic
       if (repliedTo) {
         const repliedComment = await commentMiddleware.findCommentById(
           repliedTo
         );
         repliedComment.repliedBy.push(comment._id);
         await repliedComment.save();
+
+        // 🔔 Notify replied-to comment owner (only if not same as sender)
+                 console.log('sending', 'ss')
+                 console.log('a')
+
+        if (
+          repliedComment.user.toString() !== user._id.toString() 
+        ) {
+          const actor = {
+            _id: user._id,
+            userName: user.userName,
+            profileImage: user.profileImage,
+          };
+          console.log('sending')
+          sendNotification({io:req.app.get('io'),
+            type: "reply_comment",
+            actorUser: actor,
+            targetUserId: repliedComment.user,
+            entity: { commentId: comment._id },
+          });
+        }
       }
 
-      return res.status(201).json({ success: true, comment }); // 201 for resource creation
+      // 🔔 Notify post owner (only if not same as sender)
+      if (
+        post.publisher.toString() !== user._id.toString() 
+      ) {
+        const actor = {
+          _id: user._id,
+          userName: user.userName,
+          profileImage: user.profileImage,
+        };
+
+        sendNotification({io:req.app.get('io'),
+          type: "comment_post",
+          actorUser: actor,
+          targetUserId: post.publisher,
+          entity: { postId: post._id },
+        });
+      }
+
+      return res.status(201).json({ success: true, comment });
     } catch (error) {
       handleError(error, res);
     }

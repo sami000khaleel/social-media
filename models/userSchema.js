@@ -12,14 +12,20 @@ const userSchema = new mongoose.Schema(
     describtion: { type: String },
     followers: [
       {
-        type: mongoose.SchemaTypes.ObjectId,
-        ref: "User",
+        user: {
+          type: mongoose.SchemaTypes.ObjectId,
+          ref: "User",
+        },
+        date: { type: Date, default: Date.now() },
       },
     ],
     following: [
       {
-        type: mongoose.SchemaTypes.ObjectId,
-        ref: "User",
+        user: {
+          type: mongoose.SchemaTypes.ObjectId,
+          ref: "User",
+        },
+        date: { type: Date, default: Date.now() },
       },
     ],
     certifiedDoctor: { type: Boolean, required: true },
@@ -82,6 +88,7 @@ const userSchema = new mongoose.Schema(
       default: Date.now,
     },
     files: [{ type: String, _id: false }],
+    lastSeenAt: { type: Date, default: Date.now() },
   },
   {
     timestamps: true, // This automatically adds createdAt and updatedAt fields

@@ -1,107 +1,126 @@
 const Post = require("../models/postSchema");
 const path = require("path");
 const fs = require("fs");
+const {sendNotification}=require('../notificationUtils')
 const User = require("../models/userSchema");
 const authentication = require("../middleware/authentication");
 const Comment = require("../models/commentSchema");
 const postMiddleware = require("../middleware/postMiddleware");
 const commentMiddleware = require("../middleware/commentMiddleware");
 const { handleError, throwError } = require("../errorHandler");
-const axios=require('axios')
+const axios = require("axios");
 const userMiddleware = require("../middleware/userMiddleware");
 class postController {
   constructor() {}
 
-static async getPosts(req, res) {
-  try {
-    const categories = [
-      "Anxiety & Stress Management",
-      "Depression & Mood Disorders",
-      "Relationships & Interpersonal Issues",
-      "Self-Esteem & Identity",
-      "Trauma & PTSD",
-      "Growth, Healing & Motivation",
-    ];
+  static async getPosts(req, res) {
+    try {
+      const categories = [
+        "Anxiety & Stress Management",
+        "Depression & Mood Disorders",
+        "Relationships & Interpersonal Issues",
+        "Self-Esteem & Identity",
+        "Trauma & PTSD",
+        "Growth, Healing & Motivation",
+      ];
 
-    const { userId } = await authentication.validateToken(req);
-    const user = await userMiddleware.findUserById(userId);
-    const { logs, existingPostIds = [], postsNumber = 50 } = req.body;
+      const { userId } = await authentication.validateToken(req);
+      const user = await userMiddleware.findUserById(userId);
+      const { logs, existingPostIds = [], postsNumber = 50 } = req.body;
 
-    let recommendations = null;
+      let recommendations = null;
 
-    if (logs) {
-      const aiUrl = `${process.env.AIURL}/recommend`;
+      if (logs) {
+        const aiUrl = `${process.env.AIURL}/recommend`;
 
-      const aiResponse = await axios.post(aiUrl, { logs }, {
-        headers: { "Content-Type": "application/json" },
-      }).catch(err => {
-        console.error("AI error:", err.message);
-        throwError("AI recommendation service failed", 500);
-      });
+        const aiResponse = await axios
+          .post(
+            aiUrl,
+            { logs },
+            {
+              headers: { "Content-Type": "application/json" },
+            }
+          )
+          .catch((err) => {
+            console.error("AI error:", err.message);
+            throwError("AI recommendation service failed", 500);
+          });
 
-      recommendations = aiResponse.data?.recommendations;
+        recommendations = aiResponse.data?.recommendations;
 
-      if (!recommendations || recommendations.length !== categories.length) {
-        throwError("Invalid AI response", 500);
+        if (!recommendations || recommendations.length !== categories.length) {
+          throwError("Invalid AI response", 500);
+        }
       }
-    }
 
-    const categoryScorePairs = (recommendations ?? categories.map(() => 1)).map((score, index) => ({
-      category: categories[index],
-      score,
-    })).filter(pair => pair.score > 0);
+      const categoryScorePairs = (recommendations ?? categories.map(() => 1))
+        .map((score, index) => ({
+          category: categories[index],
+          score,
+        }))
+        .filter((pair) => pair.score > 0);
 
-    const totalScore = categoryScorePairs.reduce((sum, c) => sum + c.score, 0);
-    const posts = new Map(); // to track unique posts
-    const categoryStats = {}; // for response
+      const totalScore = categoryScorePairs.reduce(
+        (sum, c) => sum + c.score,
+        0
+      );
+      const posts = new Map(); // to track unique posts
+      const categoryStats = {}; // for response
 
-    for (const { category, score } of categoryScorePairs) {
-      const limit = Math.round((score / totalScore) * postsNumber);
-      const rawPosts = await Post.find({
-        topic: category,
-        deletedFlag: false,
-        _id: { $nin: existingPostIds },
-      })
-        .populate({ path: "publisher", select: "userName profileImage blockedUsers" })
-        .sort({ createdAt: -1 })
-        .limit(limit * 2); // fetch extra in case of filter drop
+      for (const { category, score } of categoryScorePairs) {
+        const limit = Math.round((score / totalScore) * postsNumber);
+        const rawPosts = await Post.find({
+          topic: category,
+          deletedFlag: false,
+          _id: { $nin: existingPostIds },
+        })
+          .populate({
+            path: "publisher",
+            select: "userName profileImage blockedUsers",
+          })
+          .sort({ createdAt: -1 })
+          .limit(limit * 2); // fetch extra in case of filter drop
 
-      const filtered = rawPosts.filter(post => {
-        const author = post.publisher;
+        const filtered = rawPosts.filter((post) => {
+          const author = post.publisher;
 
-        const theyBlockedMe = author?.blockedUsers?.some(
-          b => b.blockedUserId.toString() === user._id.toString()
-        );
+          const theyBlockedMe = author?.blockedUsers?.some(
+            (b) => b.blockedUserId.toString() === user._id.toString()
+          );
 
-        const iBlockedThem = user?.blockedUsers?.some(
-          b => b.blockedUserId.toString() === author?._id.toString()
-        );
+          const iBlockedThem = user?.blockedUsers?.some(
+            (b) => b.blockedUserId.toString() === author?._id.toString()
+          );
 
-        return !(theyBlockedMe || iBlockedThem || posts.has(post._id.toString()));
+          return !(
+            theyBlockedMe ||
+            iBlockedThem ||
+            posts.has(post._id.toString())
+          );
+        });
+
+        const finalPosts = filtered.slice(0, limit);
+        finalPosts.forEach((post) => posts.set(post._id.toString(), post));
+
+        categoryStats[category] = {
+          count: finalPosts.length,
+          percentage: ((score / totalScore) * 100).toFixed(2) + "%",
+        };
+      }
+
+      const sortedPosts = [...posts.values()].sort(
+        (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+      );
+
+      return res.status(200).json({
+        success: true,
+        posts: sortedPosts.slice(0, postsNumber),
+        categoryStats,
       });
-
-      const finalPosts = filtered.slice(0, limit);
-      finalPosts.forEach(post => posts.set(post._id.toString(), post));
-
-      categoryStats[category] = {
-        count: finalPosts.length,
-        percentage: ((score / totalScore) * 100).toFixed(2) + '%',
-      };
+    } catch (error) {
+      handleError(error, res);
     }
-
-    const sortedPosts = [...posts.values()].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-    return res.status(200).json({
-      success: true,
-      posts: sortedPosts.slice(0, postsNumber),
-      categoryStats,
-    });
-
-  } catch (error) {
-    handleError(error, res);
   }
-}
-
 
   static async getFile(req, res) {
     try {
@@ -236,6 +255,13 @@ static async getPosts(req, res) {
       console.log(post.likes);
 
       await post.save();
+      if (user.id != post.publisher._id.toString())
+        sendNotification({io:req.app.get('io'),
+          type: "like_post",
+          actorUser: user,
+          targetUserId: post.publisher._id,
+          entity: { postId: post._id },
+        });
       return res.json({ success: true });
     } catch (error) {
       handleError(error, res);

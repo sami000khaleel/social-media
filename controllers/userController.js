@@ -5,6 +5,7 @@ const Post = require("../models/postSchema");
 const { throwError, handleError } = require("../errorHandler");
 const { profileImageUploader } = require("../multerUploaders");
 const fs = require("fs");
+const {sendNotification}=require('../notificationUtils')
 const mongoose = require("mongoose");
 const path = require("path");
 const jwt = require("jsonwebtoken");
@@ -16,49 +17,55 @@ class userController {
       user.toObject ? user.toObject() : user;
     return sanitized;
   }
- static async blockUnblock(req, res) {
-  try {
-    const { userId } = await authentication.validateToken(req);
-    const { targetUserId } = req.body;
+  static async blockUnblock(req, res) {
+    try {
+      const { userId } = await authentication.validateToken(req);
+      const { targetUserId } = req.body;
 
-    if (!targetUserId) throwError("No target user ID was sent", 400);
-    if (userId === targetUserId) throwError("Cannot block yourself", 400);
+      if (!targetUserId) throwError("No target user ID was sent", 400);
+      if (userId === targetUserId) throwError("Cannot block yourself", 400);
 
-    const [user, targetUser] = await Promise.all([
-      userMiddleware.findUserById(userId),
-      userMiddleware.findUserById(targetUserId),
-    ]);
+      const [user, targetUser] = await Promise.all([
+        userMiddleware.findUserById(userId),
+        userMiddleware.findUserById(targetUserId),
+      ]);
 
-    if (!targetUser) throwError("Target user not found", 404);
+      if (!targetUser) throwError("Target user not found", 404);
 
-    const isBlocked = userMiddleware.hasUser1blockedUser2(user, targetUser.id);
+      const isBlocked = userMiddleware.hasUser1blockedUser2(
+        user,
+        targetUser.id
+      );
 
-    if (isBlocked) {
-      // Unblock
-      userMiddleware.unBlockUser(user, targetUser);
-      await user.save();
+      if (isBlocked) {
+        // Unblock
+        userMiddleware.unBlockUser(user, targetUser);
+        await user.save();
 
-      return res.status(200).json({
-        success: true,
-        message: "User unblocked successfully",
-      });
-    } else {
-      // Block
-      const { canBlock, reason } = userMiddleware.canUserBlock(user, targetUser);
-      if (!canBlock) throwError(reason, 403);
+        return res.status(200).json({
+          success: true,
+          message: "User unblocked successfully",
+        });
+      } else {
+        // Block
+        const { canBlock, reason } = userMiddleware.canUserBlock(
+          user,
+          targetUser
+        );
+        if (!canBlock) throwError(reason, 403);
 
-      userMiddleware.blockUser(user, targetUser);
-      await Promise.all([user.save(), targetUser.save()]);
+        userMiddleware.blockUser(user, targetUser);
+        await Promise.all([user.save(), targetUser.save()]);
 
-      return res.status(200).json({
-        success: true,
-        message: "User blocked successfully",
-      });
+        return res.status(200).json({
+          success: true,
+          message: "User blocked successfully",
+        });
+      }
+    } catch (error) {
+      handleError(error, res);
     }
-  } catch (error) {
-    handleError(error, res);
   }
-}
 
   static async followUnfollow(req, res) {
     try {
@@ -81,7 +88,11 @@ class userController {
         : userMiddleware.follow(user, targetUser);
 
       await Promise.all([result.user.save(), result.targetUser.save()]);
-
+      sendNotification({io:req.app.get('io'),
+        type: "follow",
+        actorUser: user,
+        targetUserId: targetUser._id,
+      });
       return res.json({ success: true });
     } catch (error) {
       handleError(error, res);
