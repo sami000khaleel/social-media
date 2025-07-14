@@ -86,7 +86,7 @@ static unBlockUser(user, targetUser) {
   }
   static async findUserById(userId) {
     const user = await User.findById(userId);
-    if (!user.id) throwError("user was not found", 404);
+    if (!user?.id) throwError("user was not found", 404);
     return user;
   }
   static async profileSetupMiddleware(req, res, next) {

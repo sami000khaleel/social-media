@@ -170,8 +170,8 @@ class userController {
   }
   static async getUsersProfile(req, res) {
     try {
-      const { requesterId } = await authentication.validateToken(req);
-      const requester = await userMiddleware.findUserById(requesterId);
+      const { userId } = await authentication.validateToken(req);
+      const requester = await userMiddleware.findUserById(userId);
       if (!req.query?.userId) throwError("no user id was sent", 400);
       let user = await userMiddleware.findUserById(req.query.userId);
       if (userMiddleware.hasUser1blockedUser2(requester, user.id))
