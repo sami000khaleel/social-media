@@ -14,118 +14,123 @@ class postController {
   constructor() {}
 
   static async getPosts(req, res) {
-    try {
-      const categories = [
-        "Anxiety & Stress Management",
-        "Depression & Mood Disorders",
-        "Relationships & Interpersonal Issues",
-        "Self-Esteem & Identity",
-        "Trauma & PTSD",
-        "Growth, Healing & Motivation",
-      ];
+  try {
+    const categories = [
+      "Anxiety & Stress Management",
+      "Depression & Mood Disorders",
+      "Relationships & Interpersonal Issues",
+      "Self-Esteem & Identity",
+      "Trauma & PTSD",
+      "Growth, Healing & Motivation",
+    ];
 
-      const { userId } = await authentication.validateToken(req);
-      const user = await userMiddleware.findUserById(userId);
-      const { logs, existingPostIds = [], postsNumber = 50 } = req.body;
+    const { userId } = await authentication.validateToken(req);
+    const user = await userMiddleware.findUserById(userId);
+    const { logs, existingPostIds = [], postsNumber = 50 } = req.body;
 
-      let recommendations = null;
+    const reelFlag = req.body?.reelFlag 
 
-      if (logs) {
+    let recommendations = null;
+    if (logs) {
+      try {
         const aiUrl = `${process.env.AIURL}/recommend`;
 
-        const aiResponse = await axios
-          .post(
-            aiUrl,
-            { logs },
-            {
-              headers: { "Content-Type": "application/json" },
-            }
-          )
-          .catch((err) => {
-            console.error("AI error:", err.message);
-            throwError("AI recommendation service failed", 500);
-          });
+        const aiResponse = await axios.post(aiUrl, { logs }, {
+          headers: { "Content-Type": "application/json" },
+        });
 
         recommendations = aiResponse.data?.recommendations;
 
         if (!recommendations || recommendations.length !== categories.length) {
           throwError("Invalid AI response", 500);
         }
+      } catch (err) {
+        console.error("AI error:", err.message);
+        throwError("AI recommendation service failed", 500);
       }
-
-      const categoryScorePairs = (recommendations ?? categories.map(() => 1))
-        .map((score, index) => ({
-          category: categories[index],
-          score,
-        }))
-        .filter((pair) => pair.score > 0);
-
-      const totalScore = categoryScorePairs.reduce(
-        (sum, c) => sum + c.score,
-        0
-      );
-      const posts = new Map(); // to track unique posts
-      const categoryStats = {}; // for response
-
-      for (const { category, score } of categoryScorePairs) {
-        const limit = Math.round((score / totalScore) * postsNumber);
-        const rawPosts = await Post.find({
-          topic: category,
-          deletedFlag: false,
-          _id: { $nin: existingPostIds },
-        })
-          .populate({
-            path: "publisher",
-            select: "userName profileImage blockedUsers",
-          })
-          .sort({ createdAt: -1 })
-          .limit(limit * 2); // fetch extra in case of filter drop
-
-        const filtered = rawPosts.filter((post) => {
-          const author = post.publisher;
-
-          const theyBlockedMe = author?.blockedUsers?.some(
-            (b) => b.blockedUserId.toString() === user._id.toString()
-          );
-
-          const iBlockedThem = user?.blockedUsers?.some(
-            (b) => b.blockedUserId.toString() === author?._id.toString()
-          );
-
-          return !(
-            theyBlockedMe ||
-            iBlockedThem ||
-            posts.has(post._id.toString())
-          );
-        });
-
-        const finalPosts = filtered.slice(0, limit);
-        finalPosts.forEach((post) => posts.set(post._id.toString(), post));
-
-        categoryStats[category] = {
-          count: finalPosts.length,
-          percentage: ((score / totalScore) * 100).toFixed(2) + "%",
-        };
-      }
-
-      const sortedPosts = [...posts.values()].sort(
-        (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-      );
-
-      return res.status(200).json({
-        success: true,
-        posts: sortedPosts.slice(0, postsNumber),
-        categoryStats,
-      });
-    } catch (error) {
-      handleError(error, res);
     }
+
+    const categoryScorePairs = (recommendations ?? categories.map(() => 1))
+      .map((score, index) => ({
+        category: categories[index],
+        score,
+      }))
+      .filter((pair) => pair.score > 0);
+
+    const totalScore = categoryScorePairs.reduce(
+      (sum, c) => sum + c.score,
+      0
+    );
+
+    const posts = new Map();
+    const categoryStats = {};
+
+    for (const { category, score } of categoryScorePairs) {
+      const limit = Math.round((score / totalScore) * postsNumber);
+
+      const query = {
+        topic: category,
+        deletedFlag: false,
+        _id: { $nin: existingPostIds },
+      };
+
+      const rawPosts = await Post.find(query)
+        .populate({
+          path: "publisher",
+          select: "userName profileImage blockedUsers",
+        })
+        .sort({ createdAt: -1 })
+        .limit(limit * 2); // Overfetch to account for filtering
+
+      const filtered = rawPosts.filter((post) => {
+        const author = post.publisher;
+
+        const theyBlockedMe = author?.blockedUsers?.some(
+          (b) => b.blockedUserId.toString() === user._id.toString()
+        );
+
+        const iBlockedThem = user?.blockedUsers?.some(
+          (b) => b.blockedUserId.toString() === author?._id.toString()
+        );
+
+        const alreadyIncluded = posts.has(post._id.toString());
+
+        const isReel = post.videos?.length === 1;
+
+        if (reelFlag && !isReel) {
+          return false; // Skip if we want reels only and this post is not a reel
+        }
+
+        return !(theyBlockedMe || iBlockedThem || alreadyIncluded);
+      });
+
+      const finalPosts = filtered.slice(0, limit);
+      finalPosts.forEach((post) => posts.set(post._id.toString(), post));
+
+      categoryStats[category] = {
+        count: finalPosts.length,
+        percentage: ((score / totalScore) * 100).toFixed(2) + "%",
+      };
+    }
+
+    const sortedPosts = [...posts.values()].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
+
+    return res.status(200).json({
+      success: true,
+      posts: sortedPosts.slice(0, postsNumber),
+      categoryStats,
+    });
+
+  } catch (error) {
+    handleError(error, res);
   }
+}
+
 
   static async getFile(req, res) {
     try {
-      const { userId } = await authentication.validateToken(req);
-      const user = await userMiddleware.findUserById(userId);
       const { postId, filesName } = req.query;
 
       if (!filesName) throwError("No file name was sent", 400);
