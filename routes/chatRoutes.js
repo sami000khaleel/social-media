@@ -23,6 +23,31 @@ router.get("", async (req, res) => {
     handleError(error, res);
   }
 });
+router.get("/getAllChats", async (req, res) => {
+  try {
+    const { userId } = await authentication.validateToken(req);
+    const user = await
+      userMiddleware.findUserById(userId)
+    const chats = await Chat.find({ users: userId })
+
+    const sortedChats = chats.sort((a, b) => {
+      const lastA = a.messages.length > 0
+        ? a.messages[a.messages.length - 1].createdAt
+        : new Date(0); // fallback for empty chats
+
+      const lastB = b.messages.length > 0
+        ? b.messages[b.messages.length - 1].createdAt
+        : new Date(0);
+
+      return lastB - lastA; // Descending order (latest first)
+    });
+
+    res.json({ success: true, chats: sortedChats });
+
+  } catch (error) {
+    handleError(error, res);
+  }
+});
 router.get("/user-online", async (req, res) => {
   try {
     const { targetUserId } = req.query;

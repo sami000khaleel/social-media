@@ -36,12 +36,11 @@ const User=require('./models/userSchema')
 };
 
 
-  const isUserOnline = async (userId) => {
-    const sid = onlineUsers.isOnline(userId.toString());
-    if (sid) return true;
+const isUserOnline = async (userId) => {
+  const isOnline = onlineUsers.isOnline(userId.toString());
+  console.log(onlineUsers.getAll())
+  return isOnline
+};
 
-    const user = await User.findById(userId).select("lastSeenAt").lean();
-    return user?.lastSeenAt || null;
-  };
   
   module.exports={sendNotification,isUserOnline}

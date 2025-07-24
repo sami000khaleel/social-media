@@ -1,3 +1,4 @@
+const Chat = require("../models/chatSchema");
 const User = require("../models/userSchema");
 const userMiddleware = require("../middleware/userMiddleware");
 const authentication = require("../middleware/authentication");
@@ -5,7 +6,7 @@ const Post = require("../models/postSchema");
 const { throwError, handleError } = require("../errorHandler");
 const { profileImageUploader } = require("../multerUploaders");
 const fs = require("fs");
-const {sendNotification}=require('../notificationUtils')
+const { sendNotification } = require("../notificationUtils");
 const mongoose = require("mongoose");
 const path = require("path");
 const jwt = require("jsonwebtoken");
@@ -16,6 +17,21 @@ class userController {
     const { password, __v, _id, createdAt, updatedAt, ...sanitized } =
       user.toObject ? user.toObject() : user;
     return sanitized;
+  }
+  static async getFollowersFollowing(req, res) {
+    try {
+      const { userId } = await authentication.validateToken(req);
+      let user = await userMiddleware.findUserById(userId);
+      user = await user.populate([
+        { path: "followers.user", select: "profileImage userName" },
+        { path: "following.user", select: "profileImage userName" },
+      ]);
+      const followers=user.followers
+      const following=user.following
+      return res.json({success:true,following,followers})
+    } catch (error) {
+      handleError(error, res);
+    }
   }
   static async blockUnblock(req, res) {
     try {
@@ -80,15 +96,23 @@ class userController {
         throwError("you have been blocked by this user", 403);
       if (userMiddleware.hasUser1blockedUser2(user, targetUser.id))
         throwError("you have blocked this user", 403);
-      const isFollowing = user.following.some((id) =>
-        id.equals(targetUser._id)
+      const isFollowing = user.following.some(({ user }) =>
+        user.equals(targetUser._id)
       );
       const result = isFollowing
         ? userMiddleware.unfollow(user, targetUser)
         : userMiddleware.follow(user, targetUser);
-
-      await Promise.all([result.user.save(), result.targetUser.save()]);
-      sendNotification({io:req.app.get('io'),
+      console.log("asd");
+      const chat = await Chat.findOne({
+        users: { $all: [user.id, targetUser.id], $size: 2 },
+      });
+      if (!chat?.id) {
+        await Chat.create({ users: [user.id, targetUser.id] });
+      }
+      await result.user.save();
+      await result.targetUser.save();
+      sendNotification({
+        io: req.app.get("io"),
         type: "follow",
         actorUser: user,
         targetUserId: targetUser._id,

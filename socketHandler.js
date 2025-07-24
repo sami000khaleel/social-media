@@ -41,6 +41,7 @@ module.exports = function socketHandler(io) {
         socket.userId = userId;
 
         onlineUsers.setOnline(userId, socket.id);
+        
         console.log(onlineUsers.getAll());
 
 

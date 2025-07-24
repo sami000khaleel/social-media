@@ -21,4 +21,5 @@ router.get('/confirm-new-email-change',userController.receiveSecondConfirmation)
 router.get('/get-users-profile',userController.getUsersProfile)
 router.put('/follow-unfollow',userController.followUnfollow)
 router.put('/block-unblock',userController.blockUnblock)
+router.get('/get-followers-following',userController.getFollowersFollowing)
 module.exports=router

@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 // add the user name for all the code around
 const userSchema = new mongoose.Schema(
   {
+    gender: { type: String, required: true, enum: ["male", "female"] },
     blockedUsers: [
       {
         blockedUserId: { type: mongoose.SchemaTypes.ObjectId },
@@ -12,6 +13,7 @@ const userSchema = new mongoose.Schema(
     describtion: { type: String },
     followers: [
       {
+        _id: false,
         user: {
           type: mongoose.SchemaTypes.ObjectId,
           ref: "User",
@@ -21,6 +23,7 @@ const userSchema = new mongoose.Schema(
     ],
     following: [
       {
+        _id: false,
         user: {
           type: mongoose.SchemaTypes.ObjectId,
           ref: "User",
@@ -91,6 +94,7 @@ const userSchema = new mongoose.Schema(
     lastSeenAt: { type: Date, default: Date.now() },
   },
   {
+    versionKey: false,
     timestamps: true, // This automatically adds createdAt and updatedAt fields
   }
 );

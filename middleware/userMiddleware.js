@@ -70,20 +70,22 @@ static unBlockUser(user, targetUser) {
     let posts = await Post.find({ _id: { $in: postsIds } });
     return posts;
   }
-  static unfollow(user, targetUser) {
-    user.following = user.following.filter(
-      (id) => id.toString() != targetUser.id.toString()
-    );
-    targetUser.followers = targetUser.followers.filter(
-      (id) => id.toString() != user.id.toString()
-    );
-    return { user, targetUser };
-  }
+static unfollow(user, targetUser) {
+  console.log()
+  user.following = user.following.filter(
+    (followObj) => followObj.user.toString() != targetUser.id.toString()
+  );
+  targetUser.followers = targetUser.followers.filter(
+    (followerObj) => followerObj.user.toString() != user.id.toString()
+  );
+  return { user, targetUser };
+}
   static follow(user, targetUser) {
-    user.following.push(targetUser.id);
-    targetUser.followers.push(user.id);
-    return { user, targetUser };
-  }
+  user.following.push({ user: targetUser.id });
+  targetUser.followers.push({ user: user.id });
+  return { user, targetUser };
+}
+
   static async findUserById(userId) {
     const user = await User.findById(userId);
     if (!user?.id) throwError("user was not found", 404);

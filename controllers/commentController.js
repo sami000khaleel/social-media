@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
-const io=require('../index')
-const {sendNotification}=require('../notificationUtils')
+const io = require('../index')
+const { sendNotification } = require('../notificationUtils')
 const Post = require("../models/postSchema");
 const User = require("../models/userSchema");
 const Comment = require("../models/commentSchema");
@@ -10,7 +10,7 @@ const authentication = require("../middleware/authentication");
 const userMiddleware = require("../middleware/userMiddleware");
 const { throwError, handleError } = require("../errorHandler");
 class commentController {
-  constructor() {}
+  constructor() { }
   static async likeComment(req, res) {
     try {
       const { userId } = await authentication.validateToken(req);
@@ -49,7 +49,8 @@ class commentController {
       await comment.save();
 
       if (!alreadyLiked && user.id !== comment.user._id.toString()) {
-        sendNotification({io:req.app.get('io'),
+        sendNotification({
+          io: req.app.get('io'),
           type: "like_comment",
           actorUser: user,
           targetUserId: comment.user._id,
@@ -68,17 +69,21 @@ class commentController {
 
   static async deleteComment(req, res) {
     try {
-      if (!req.query?.commentId) throwError("no comment id was found", 400);
+      const commentId = req.query.commentId;
+      if (!commentId) throwError("no comment id was found", 400);
+
       let comment = await Comment.findById(commentId);
       if (!comment?.id) throwError("no comment was found", 404);
+
       comment.deletedFlag = true;
       await comment.save();
+
       return res.json({ success: true });
     } catch (error) {
-      [74];
       handleError(error, res);
     }
   }
+
   static async getReplies(req, res) {
     try {
       const { userId } = await authentication.validateToken(req);
@@ -88,11 +93,16 @@ class commentController {
       const commentsIds =
         commentMiddleware.validateCommentsIds(commentsIdsString);
 
+
+     
+
+
       const comments = await Comment.find({
         _id: { $in: commentsIds },
         deletedFlag: false,
       });
-
+      console.log("Requested IDs:", commentsIds);
+      console.log("Found Comments:", comments.map(c => c._id));
       if (commentsIds.length !== comments.length) {
         throwError("Some comments are missing", 404);
       }
@@ -109,7 +119,7 @@ class commentController {
             populate: { path: "publisher", select: "blockedUsers" },
           },
         ]);
-
+      
       replies = replies.filter((reply) => {
         const replyUser = reply.user;
         const postOwner = reply.postId?.publisher;
@@ -185,11 +195,11 @@ class commentController {
         await repliedComment.save();
 
         // 🔔 Notify replied-to comment owner (only if not same as sender)
-                 console.log('sending', 'ss')
-                 console.log('a')
+        console.log('sending', 'ss')
+        console.log('a')
 
         if (
-          repliedComment.user.toString() !== user._id.toString() 
+          repliedComment.user.toString() !== user._id.toString()
         ) {
           const actor = {
             _id: user._id,
@@ -197,7 +207,8 @@ class commentController {
             profileImage: user.profileImage,
           };
           console.log('sending')
-          sendNotification({io:req.app.get('io'),
+          sendNotification({
+            io: req.app.get('io'),
             type: "reply_comment",
             actorUser: actor,
             targetUserId: repliedComment.user,
@@ -208,7 +219,7 @@ class commentController {
 
       // 🔔 Notify post owner (only if not same as sender)
       if (
-        post.publisher.toString() !== user._id.toString() 
+        post.publisher.toString() !== user._id.toString()
       ) {
         const actor = {
           _id: user._id,
@@ -216,7 +227,8 @@ class commentController {
           profileImage: user.profileImage,
         };
 
-        sendNotification({io:req.app.get('io'),
+        sendNotification({
+          io: req.app.get('io'),
           type: "comment_post",
           actorUser: actor,
           targetUserId: post.publisher,

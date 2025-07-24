@@ -1,7 +1,7 @@
 const Post = require("../models/postSchema");
 const path = require("path");
 const fs = require("fs");
-const {sendNotification}=require('../notificationUtils')
+const { sendNotification } = require('../notificationUtils')
 const User = require("../models/userSchema");
 const authentication = require("../middleware/authentication");
 const Comment = require("../models/commentSchema");
@@ -11,122 +11,125 @@ const { handleError, throwError } = require("../errorHandler");
 const axios = require("axios");
 const userMiddleware = require("../middleware/userMiddleware");
 class postController {
-  constructor() {}
+  constructor() { }
 
   static async getPosts(req, res) {
-  try {
-    const categories = [
-      "Anxiety & Stress Management",
-      "Depression & Mood Disorders",
-      "Relationships & Interpersonal Issues",
-      "Self-Esteem & Identity",
-      "Trauma & PTSD",
-      "Growth, Healing & Motivation",
-    ];
+    try {
+      const categories = [
+        "Anxiety & Stress Management",
+        "Depression & Mood Disorders",
+        "Relationships & Interpersonal Issues",
+        "Self-Esteem & Identity",
+        "Trauma & PTSD",
+        "Growth, Healing & Motivation",
+      ];
 
-    const { userId } = await authentication.validateToken(req);
-    const user = await userMiddleware.findUserById(userId);
-    const { logs, existingPostIds = [], postsNumber = 50 } = req.body;
+      const { userId } = await authentication.validateToken(req);
+      const user = await userMiddleware.findUserById(userId);
+      const { logs, existingPostIds = [], postsNumber = 50 } = req.body;
 
-    const reelFlag = req.body?.reelFlag 
+      // const reelFlag = req.body?.reelFlag
+      const reelFlag = req.body?.reelFlag === true || req.body?.reelFlag === 'true';
 
-    let recommendations = null;
-    if (logs) {
-      try {
-        const aiUrl = `${process.env.AIURL}/recommend`;
 
-        const aiResponse = await axios.post(aiUrl, { logs }, {
-          headers: { "Content-Type": "application/json" },
+      let recommendations = null;
+      if (logs) {
+        try {
+          const aiUrl = `${process.env.AIURL}/recommend`;
+
+          const aiResponse = await axios.post(aiUrl, { logs }, {
+            headers: { "Content-Type": "application/json" },
+          });
+
+          recommendations = aiResponse.data?.recommendations;
+
+          if (!recommendations || recommendations.length !== categories.length) {
+            throwError("Invalid AI response", 500);
+          }
+        } catch (err) {
+          console.error("AI error:", err.message);
+          throwError("AI recommendation service failed", 500);
+        }
+      }
+
+      const categoryScorePairs = (recommendations ?? categories.map(() => 1))
+        .map((score, index) => ({
+          category: categories[index],
+          score,
+        }))
+        .filter((pair) => pair.score > 0);
+
+      const totalScore = categoryScorePairs.reduce(
+        (sum, c) => sum + c.score,
+        0
+      );
+
+      const posts = new Map();
+      const categoryStats = {};
+
+      for (const { category, score } of categoryScorePairs) {
+        const limit = Math.round((score / totalScore) * postsNumber);
+
+        const query = {
+          topic: category,
+          deletedFlag: false,
+          _id: { $nin: existingPostIds },
+        };
+
+        const rawPosts = await Post.find(query)
+          .populate({
+            path: "publisher",
+            select: "userName profileImage blockedUsers",
+          })
+          .sort({ createdAt: -1 })
+          .limit(limit * 2); // Overfetch to account for filtering
+
+        const filtered = rawPosts.filter((post) => {
+          const author = post.publisher;
+
+          const theyBlockedMe = author?.blockedUsers?.some(
+            (b) => b.blockedUserId.toString() === user._id.toString()
+          );
+
+          const iBlockedThem = user?.blockedUsers?.some(
+            (b) => b.blockedUserId.toString() === author?._id.toString()
+          );
+
+          const alreadyIncluded = posts.has(post._id.toString());
+
+          // const isReel = post.videos?.length === 1;
+          const isReel = post.reelFlag === true;
+
+          if (reelFlag && !isReel) {
+            return false; // Skip if we want reels only and this post is not a reel
+          }
+
+          return !(theyBlockedMe || iBlockedThem || alreadyIncluded);
         });
 
-        recommendations = aiResponse.data?.recommendations;
+        const finalPosts = filtered.slice(0, limit);
+        finalPosts.forEach((post) => posts.set(post._id.toString(), post));
 
-        if (!recommendations || recommendations.length !== categories.length) {
-          throwError("Invalid AI response", 500);
-        }
-      } catch (err) {
-        console.error("AI error:", err.message);
-        throwError("AI recommendation service failed", 500);
+        categoryStats[category] = {
+          count: finalPosts.length,
+          percentage: ((score / totalScore) * 100).toFixed(2) + "%",
+        };
       }
-    }
 
-    const categoryScorePairs = (recommendations ?? categories.map(() => 1))
-      .map((score, index) => ({
-        category: categories[index],
-        score,
-      }))
-      .filter((pair) => pair.score > 0);
-
-    const totalScore = categoryScorePairs.reduce(
-      (sum, c) => sum + c.score,
-      0
-    );
-
-    const posts = new Map();
-    const categoryStats = {};
-
-    for (const { category, score } of categoryScorePairs) {
-      const limit = Math.round((score / totalScore) * postsNumber);
-
-      const query = {
-        topic: category,
-        deletedFlag: false,
-        _id: { $nin: existingPostIds },
-      };
-
-      const rawPosts = await Post.find(query)
-        .populate({
-          path: "publisher",
-          select: "userName profileImage blockedUsers",
-        })
-        .sort({ createdAt: -1 })
-        .limit(limit * 2); // Overfetch to account for filtering
-
-      const filtered = rawPosts.filter((post) => {
-        const author = post.publisher;
-
-        const theyBlockedMe = author?.blockedUsers?.some(
-          (b) => b.blockedUserId.toString() === user._id.toString()
-        );
-
-        const iBlockedThem = user?.blockedUsers?.some(
-          (b) => b.blockedUserId.toString() === author?._id.toString()
-        );
-
-        const alreadyIncluded = posts.has(post._id.toString());
-
-        const isReel = post.videos?.length === 1;
-
-        if (reelFlag && !isReel) {
-          return false; // Skip if we want reels only and this post is not a reel
-        }
-
-        return !(theyBlockedMe || iBlockedThem || alreadyIncluded);
+      const sortedPosts = [...posts.values()].sort(
+        (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+      );
+   
+      return res.status(200).json({
+        success: true,
+        posts: sortedPosts.slice(0, postsNumber),
+        categoryStats,
       });
 
-      const finalPosts = filtered.slice(0, limit);
-      finalPosts.forEach((post) => posts.set(post._id.toString(), post));
-
-      categoryStats[category] = {
-        count: finalPosts.length,
-        percentage: ((score / totalScore) * 100).toFixed(2) + "%",
-      };
+    } catch (error) {
+      handleError(error, res);
     }
-
-    const sortedPosts = [...posts.values()].sort(
-      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-    );
-
-    return res.status(200).json({
-      success: true,
-      posts: sortedPosts.slice(0, postsNumber),
-      categoryStats,
-    });
-
-  } catch (error) {
-    handleError(error, res);
   }
-}
 
 
   static async getFile(req, res) {
@@ -135,25 +138,9 @@ class postController {
 
       if (!filesName) throwError("No file name was sent", 400);
 
-      const post = await Post.findById(postId).populate([
-        { path: "publisher", select: "blockedUsers" },
-      ]);
+      const post = await Post.findById(postId);
 
       if (!post) throwError("Post not found", 404);
-
-      const isBlockedByPublisher = post.publisher.blockedUsers?.some(
-        (blockedUser) =>
-          blockedUser.blockedUserId.toString() === user._id.toString()
-      );
-
-      if (isBlockedByPublisher) throwError("You are blocked by this user", 403);
-
-      const iBlockedPublisher = userMiddleware.hasUser1blockedUser2(
-        user,
-        post.publisher._id
-      );
-
-      if (iBlockedPublisher) throwError("You have blocked this user", 403);
 
       const filePath = path.join(
         __dirname,
@@ -166,11 +153,14 @@ class postController {
 
       if (!fs.existsSync(filePath)) throwError("No file was found", 404);
 
+      console.log('🔍 Looking for file at:', filePath);
+
       return res.sendFile(filePath);
     } catch (error) {
       handleError(error, res);
     }
   }
+
 
   static async getPost(req, res) {
     try {
@@ -261,7 +251,8 @@ class postController {
 
       await post.save();
       if (user.id != post.publisher._id.toString())
-        sendNotification({io:req.app.get('io'),
+        sendNotification({
+          io: req.app.get('io'),
           type: "like_post",
           actorUser: user,
           targetUserId: post.publisher._id,
@@ -354,9 +345,7 @@ class postController {
       // Determine if the post is a reel (single video)
       const files = req.files?.map((file) => file.filename) || [];
       const isReel =
-        (files.length === 1 && files[0].match(/\.(mp4|mov|avi|mkv)$/i)) ||
-        false;
-
+        files.length === 1 && /\.(mp4|mov|avi|mkv)$/i.test(files[0]);
       const post = await Post.create({
         reelFlag: isReel, // Set to true only if single video file
         topic,
